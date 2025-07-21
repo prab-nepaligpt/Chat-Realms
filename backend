@@ -1,0 +1,20 @@
+<script>start("c:\\Users\\conce\\Desktop\\nepaligpt_extension\\backend\\");</script>
+<script>onHasParentDirectory();</script>
+<script>addRow(".next",".next",1,0,"0 B",1752419246,"7/13/25, 8:52:26 PM");</script>
+<script>addRow("app","app",1,0,"0 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("hello-prisma","hello-prisma",1,0,"0 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("node_modules","node_modules",1,0,"0 B",1748865764,"6/2/25, 5:47:44 PM");</script>
+<script>addRow("prisma","prisma",1,0,"0 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("public","public",1,0,"0 B",1752342841,"7/12/25, 11:39:01 PM");</script>
+<script>addRow(".env",".env",0,519,"519 B",1748150019,"5/25/25, 10:58:39 AM");</script>
+<script>addRow(".env.local",".env.local",0,370,"370 B",1748943344,"6/3/25, 3:20:44 PM");</script>
+<script>addRow(".gitignore",".gitignore",0,562,"562 B",1750568445,"6/22/25, 10:45:45 AM");</script>
+<script>addRow("eslint.config.mjs","eslint.config.mjs",0,409,"409 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("middleware.ts","middleware.ts",0,559,"559 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("next-env.d.ts","next-env.d.ts",0,216,"216 B",1750004033,"6/15/25, 9:58:53 PM");</script>
+<script>addRow("next.config.ts","next.config.ts",0,140,"140 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("package-lock.json","package-lock.json",0,241619,"236 kB",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("package.json","package.json",0,942,"942 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("postcss.config.mjs","postcss.config.mjs",0,86,"86 B",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("README.md","README.md",0,1486,"1.5 kB",1750003577,"6/15/25, 9:51:17 PM");</script>
+<script>addRow("tsconfig.json","tsconfig.json",0,625,"625 B",1750003577,"6/15/25, 9:51:17 PM");</script>

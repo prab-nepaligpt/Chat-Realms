@@ -1,0 +1,22 @@
+@import "tailwindcss";
+:root {
+  /* Light theme */
+  --bg-color: #ffffff;
+  --text-color: #1a1a1a;
+  --card-bg: #f8f9fa;
+  --border-color: #dee2e6;
+}
+
+.dark-theme {
+  --bg-color: #121212;
+  --text-color: #ffffff;
+  --card-bg: #1e1e1e;
+  --border-color: #333333;
+}
+
+/* Apply the variables */
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
