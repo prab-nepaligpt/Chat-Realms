@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './pages/ChatPage'
 import { GroupsListPage } from './pages/GroupsListPage'
 import { ThemeProvider } from './context/ThemeContext'
+import { ProtectedRoute } from './Components/ProtectedRoute'
 
 function App() {
   return (
@@ -12,9 +13,11 @@ function App() {
       <Router>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/groups" element={<GroupsListPage />} />
-          <Route path="/groups/:groupId" element={<ChatPage />} />
-          <Route path="*" element={<Navigate to="/groups" replace />} />
+          <Route element={<ProtectedRoute />}>
+            <Route path="/groups" element={<GroupsListPage />} />
+            <Route path="/groups/:groupId" element={<ChatPage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
     </ThemeProvider>

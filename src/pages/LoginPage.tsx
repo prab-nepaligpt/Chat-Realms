@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Mail, Lock, User, Eye, EyeOff } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 export const LoginPage = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -11,6 +13,18 @@ export const LoginPage = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const { login, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/groups', { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  if (isAuthenticated) {
+    return null;
+  }
 
   const validateForm = () => {
     setError("");
@@ -52,15 +66,16 @@ export const LoginPage = () => {
 
     try {
       if (isLogin) {
-        // Handle login logic
-        console.log("Logging in with:", { email, password });
-        // Add your login API call here
-        // await loginUser(email, password);
+        const success = await login(email, password);
+        if (success) {
+          navigate('/groups');
+        } else {
+          setError('Invalid email or password');
+        }
       } else {
         // Handle signup logic
         console.log("Signing up with:", { name, email, password });
-        // Add your signup API call here
-        // await signupUser(name, email, password);
+        setError("Signup is not implemented yet.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
