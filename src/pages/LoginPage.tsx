@@ -78,11 +78,16 @@ export const LoginPage = () => {
           setError('Invalid email or password');
         }
       } else {
-        const success = await register({ name, email, password, description });
-        if (success) {
-          navigate('/groups');
-        } else {
-          setError('Registration failed. Please try again.');
+        try {
+          await register({ name, email, password, description });
+          // Switch to login mode after successful registration
+          setIsLogin(true);
+          resetForm();
+          setError('');
+          // Show success message briefly
+          alert('Registration successful! Please login with your credentials.');
+        } catch (regError) {
+          setError(regError instanceof Error ? regError.message : 'Registration failed. Please try again.');
         }
       }
     } catch (err) {
