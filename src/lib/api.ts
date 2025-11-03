@@ -123,6 +123,62 @@ export const authApi = {
     }
   },
 
+  async getMe(): Promise<{ name: string; email: string; description: string | null }> {
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: "GET",
+      headers: { ...authHeader(), ...NGROK_BYPASS, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Fetch user info failed (${res.status})`);
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(text || 'User info response was not JSON');
+    }
+    const data = (await res.json()) as { name: string; email: string; description: string | null };
+    return data;
+  },
+
+  async getUsers(): Promise<Array<{ name: string; description: string | null }>> {
+    const res = await fetch(`${BASE_URL}/api/users`, {
+      method: "GET",
+      headers: { ...authHeader(), ...NGROK_BYPASS, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Fetch users failed (${res.status})`);
+    }
+    if (res.status === 204) return [];
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(text || 'Users response was not JSON');
+    }
+    const data = (await res.json()) as Array<{ name: string; description: string | null }>;
+    return data;
+  },
+
+  async getGroupMembers(groupName: string): Promise<Array<{ name: string; email: string | null; description: string | null }>> {
+    const res = await fetch(`${BASE_URL}/api/group/users/${encodeURIComponent(groupName)}`, {
+      method: "GET",
+      headers: { ...authHeader(), ...NGROK_BYPASS, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Fetch group members failed (${res.status})`);
+    }
+    if (res.status === 204) return [];
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(text || 'Group members response was not JSON');
+    }
+    const data = (await res.json()) as Array<{ name: string; email: string | null; description: string | null }>;
+    return data;
+  },
+
   async getAgents(): Promise<Array<{ name: string; description: string | null }>> {
     const res = await fetch(`${BASE_URL}/api/agents`, {
       method: "GET",
@@ -140,6 +196,36 @@ export const authApi = {
     }
     const data = (await res.json()) as Array<{ name: string; description: string | null }>;
     return data;
+  },
+
+  async getAssignedAgents(groupName: string): Promise<Array<{ name: string; description: string | null }>> {
+    const res = await fetch(`${BASE_URL}/api/agent/${encodeURIComponent(groupName)}`, {
+      method: "GET",
+      headers: { ...authHeader(), ...NGROK_BYPASS, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Fetch assigned agents failed (${res.status})`);
+    }
+    if (res.status === 204) return [];
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(text || 'Assigned agents response was not JSON');
+    }
+    const data = await res.json();
+    // API returns single object with {agent, description}, convert to array format
+    if (data && typeof data === 'object' && 'agent' in data) {
+      return [{ name: data.agent, description: data.description || null }];
+    }
+    // If it's already an array, return as is
+    if (Array.isArray(data)) {
+      return data.map((item: any) => ({
+        name: item.agent || item.name,
+        description: item.description || null
+      }));
+    }
+    return [];
   },
 
   async assignAgentToGroup(params: { agent_name: string; group_name: string }): Promise<void> {

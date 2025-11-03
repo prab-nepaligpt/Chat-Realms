@@ -1,8 +1,8 @@
- import { useNavigate } from "react-router-dom";
- import { Plus, Search, Check, ArrowLeft, Send, Smile, Paperclip, Mic, Settings as MoreVertical, Volume2 } from "lucide-react";
- import { useState, useEffect, useRef } from "react";
- import { useAuth } from "../context/AuthContext";
- import { groupApi, type GetGroup, authApi, storage } from "../lib/api";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Check, ArrowLeft, Send, Smile, Paperclip, Mic, Settings as MoreVertical, Volume2, Stethoscope, Laugh, BookOpen, Clock, Globe, Newspaper } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { useAuth } from "../context/AuthContext";
+import { groupApi, type GetGroup, authApi, storage } from "../lib/api";
 
 // Groups are fetched from backend; start empty
 const initialGroups: GetGroup[] = [];
@@ -13,6 +13,18 @@ const testUsers = [
   { id: 'u3', name: 'Amit', avatar: '🧑‍🎨' },
   { id: 'u4', name: 'Ram', avatar: '🦸‍♀️' },
 ];
+
+// Agent icon mapping
+const getAgentIcon = (agentName: string) => {
+  const name = agentName.toLowerCase();
+  if (name.includes('quag') || name.includes('clown')) return Laugh;
+  if (name.includes('doctor')) return Stethoscope;
+  if (name.includes('dostoevsky')) return BookOpen;
+  if (name.includes('history')) return Clock;
+  if (name.includes('cosmo')) return Globe;
+  if (name.includes('news') || name.includes('whisperer')) return Newspaper;
+  return null;
+};
 
 export const GroupsListPage = () => {
   const navigate = useNavigate();
@@ -29,8 +41,11 @@ export const GroupsListPage = () => {
   const [selectedName, setSelectedName] = useState<string>("");
   const [message, setMessage] = useState("");
   type ChatMsg = { id: number; text: string; sender: 'user' | 'bot' | 'system'; timestamp: Date; rawSentAt?: string | null; fromName?: string };
-  const [messagesByGroup, setMessagesByGroup] = useState<Record<string, ChatMsg[]>>({});
+  const messagesByGroupRef = useRef<Record<string, ChatMsg[]>>({});
+  const [currentMessages, setCurrentMessages] = useState<ChatMsg[]>([]);
+  const [renderTrigger, setRenderTrigger] = useState(0);
   const msgIdCounter = useRef(0);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   // WebSocket
   const wsRef = useRef<WebSocket | null>(null);
   const [, setWsConnected] = useState(false);
@@ -53,12 +68,28 @@ export const GroupsListPage = () => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   // Join request modal
   const [showJoin, setShowJoin] = useState(false);
-  const [joinToName, setJoinToName] = useState("");
-  const [joinGroupName, setJoinGroupName] = useState("");
-  const [joinLoading, setJoinLoading] = useState(false);
+  const [allUsers, setAllUsers] = useState<Array<{ name: string; description: string | null }>>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [invitingUser, setInvitingUser] = useState<string | null>(null);
+  // View members modal
+  const [showMembers, setShowMembers] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<Array<{ name: string; email: string | null; description: string | null }>>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  // User info (Me section)
+  const [userInfo, setUserInfo] = useState<{ name: string; email: string; description: string | null } | null>(null);
+  const [showUserInfo, setShowUserInfo] = useState(false);
+  // View assigned agents modal
+  const [showAssignedAgents, setShowAssignedAgents] = useState(false);
+  const [assignedAgents, setAssignedAgents] = useState<Array<{ name: string; description: string | null }>>([]);
+  const [assignedAgentsLoading, setAssignedAgentsLoading] = useState(false);
+  const [assignedAgentsError, setAssignedAgentsError] = useState<string | null>(null);
   // Chat header menu (three dots)
   const [showChatMenu, setShowChatMenu] = useState(false);
   const chatMenuRef = useRef<HTMLDivElement | null>(null);
+  // Track recently sent messages (per group) to avoid double-adding echo
+  const recentSentRef = useRef<Record<string, Map<string, number>>>({});
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinSuccess, setJoinSuccess] = useState<string | null>(null);
   // Change password modal
@@ -100,6 +131,70 @@ export const GroupsListPage = () => {
     return `${h}:${m}`;
   };
 
+  // Add group from modal
+  const handleAddGroup = async () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    try {
+      await groupApi.addGroup({ name, description: "" });
+      // refresh list
+      const data = await groupApi.myGroups();
+      setGroups(data);
+      setShowAdd(false);
+      setNewGroupName("");
+      setNewGroupAvatar("💬");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to add group');
+    }
+  };
+
+  // Update current messages when group changes
+  useEffect(() => {
+    if (selectedName) {
+      const msgs = messagesByGroupRef.current[selectedName] || [];
+      setCurrentMessages(msgs);
+    } else {
+      setCurrentMessages([]);
+    }
+  }, [selectedName, renderTrigger]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentMessages]);
+
+  // Helper: append message to a group's list
+  const addIncomingMessage = (
+    groupKey: string,
+    msg: { id?: number; text: string; sender: 'user' | 'bot' | 'system'; timestamp: Date; rawSentAt: string | null; fromName?: string }
+  ) => {
+    // Get current list for this group
+    const list = messagesByGroupRef.current[groupKey] ? [...messagesByGroupRef.current[groupKey]] : [];
+    
+    // Generate id locally
+    msgIdCounter.current++;
+    const item = { id: msg.id ?? msgIdCounter.current, ...msg };
+    console.log('➕ Adding new message | text:', msg.text.substring(0, 30), '| timestamp:', msg.timestamp.toISOString());
+    list.push(item);
+    
+    // Sort chronologically: oldest first, newest last
+    list.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    
+    console.log('📊 After sort, first message:', list[0] ? { text: list[0].text.substring(0, 20), time: list[0].timestamp.toISOString() } : 'none');
+    console.log('📊 After sort, last message:', list[list.length - 1] ? { text: list[list.length - 1].text.substring(0, 20), time: list[list.length - 1].timestamp.toISOString() } : 'none');
+    
+    // Update ref
+    messagesByGroupRef.current[groupKey] = list;
+    
+    // If this is the currently selected group, update display immediately
+    if (groupKey === selectedName) {
+      setCurrentMessages([...list]);
+    }
+    
+    // Force render trigger
+    setRenderTrigger(t => t + 1);
+  };
+
   // Load user's groups from backend
   useEffect(() => {
     const load = async () => {
@@ -116,6 +211,77 @@ export const GroupsListPage = () => {
     };
     load();
   }, []);
+
+  // Load user info
+  useEffect(() => {
+    const loadUserInfo = async () => {
+      try {
+        const data = await authApi.getMe();
+        setUserInfo(data);
+      } catch (e) {
+        console.error('Failed to load user info:', e);
+      }
+    };
+    loadUserInfo();
+  }, []);
+
+  // Load all users when invite modal opens
+  useEffect(() => {
+    if (showJoin) {
+      const loadUsers = async () => {
+        setUsersLoading(true);
+        setUsersError(null);
+        try {
+          const data = await authApi.getUsers();
+          setAllUsers(data);
+        } catch (e) {
+          setUsersError(e instanceof Error ? e.message : 'Failed to load users');
+        } finally {
+          setUsersLoading(false);
+        }
+      };
+      loadUsers();
+    }
+  }, [showJoin]);
+
+  // Load group members and assigned agents when a group is selected
+  useEffect(() => {
+    if (selectedName) {
+      const loadMembers = async () => {
+        setMembersLoading(true);
+        setMembersError(null);
+        try {
+          const data = await authApi.getGroupMembers(selectedName);
+          setGroupMembers(data);
+        } catch (e) {
+          setMembersError(e instanceof Error ? e.message : 'Failed to load members');
+          setGroupMembers([]);
+        } finally {
+          setMembersLoading(false);
+        }
+      };
+      
+      const loadAssignedAgents = async () => {
+        setAssignedAgentsLoading(true);
+        setAssignedAgentsError(null);
+        try {
+          const data = await authApi.getAssignedAgents(selectedName);
+          setAssignedAgents(data);
+        } catch (e) {
+          setAssignedAgentsError(e instanceof Error ? e.message : 'Failed to load assigned agents');
+          setAssignedAgents([]);
+        } finally {
+          setAssignedAgentsLoading(false);
+        }
+      };
+      
+      loadMembers();
+      loadAssignedAgents();
+    } else {
+      setGroupMembers([]);
+      setAssignedAgents([]);
+    }
+  }, [selectedName]);
 
   // Connect WebSocket when a group is selected
   useEffect(() => {
@@ -150,31 +316,43 @@ export const GroupsListPage = () => {
       if (!raw) return;
       console.log('📨 WebSocket received:', raw);
       try {
-        const obj = JSON.parse(raw) as { sender?: string; message?: string; sent_at?: string };
+        const obj = JSON.parse(raw) as { sender?: string; agent_name?: string; message?: string; sent_at?: string };
         const text = obj.message ?? raw;
-        const senderName = (obj.sender ?? '').toString();
-        const ts = obj.sent_at ? new Date(obj.sent_at) : new Date();
-        const isMe = myUsername && senderName && senderName.toLowerCase() === myUsername.toLowerCase();
-        console.log('📩 Parsed message for group:', groupKey, '| from:', senderName, '| isMe:', isMe, '| text:', text.substring(0, 50));
-        setMessagesByGroup(prev => {
-          const list = prev[groupKey] ? [...prev[groupKey]] : [];
-          // Deduplicate: check if message already exists
-          const exists = list.some(m => 
-            m.text === text && 
-            m.fromName === (senderName || undefined) &&
-            m.rawSentAt === (obj.sent_at ?? null)
-          );
-          if (exists) {
-            console.log('⚠️ Duplicate message detected, skipping');
-          } else {
-            msgIdCounter.current++;
-            console.log('✅ Adding message to group:', groupKey, '| msgId:', msgIdCounter.current);
-            list.push({ id: msgIdCounter.current, text, sender: isMe ? 'user' : 'bot', timestamp: ts, rawSentAt: obj.sent_at ?? null, fromName: senderName || undefined });
+        // Check if it's an agent message or regular user message
+        const senderName = obj.agent_name ? obj.agent_name : (obj.sender ?? '').toString();
+        let ts: Date;
+        if (obj.sent_at) {
+          ts = new Date(obj.sent_at);
+        } else if (currentMessages.length > 0) {
+          // Use last message's timestamp + 1ms (server time)
+          const lastMsgTime = currentMessages[currentMessages.length - 1].timestamp.getTime();
+          ts = new Date(lastMsgTime + 1);
+        } else {
+          ts = new Date();
+        }
+        const isMe = myUsername && obj.sender && obj.sender.toLowerCase() === myUsername.toLowerCase();
+        console.log('📩 Parsed JSON message | group:', groupKey, '| from:', senderName, '| isMe:', isMe, '| text:', text.substring(0, 80));
+        // Skip echo of our own optimistic message if same text just sent within 3s
+        if (isMe) {
+          const now = Date.now();
+          if (!recentSentRef.current[groupKey]) recentSentRef.current[groupKey] = new Map();
+          const last = recentSentRef.current[groupKey].get(text);
+          if (last && now - last < 3000) {
+            // consume and remove marker
+            recentSentRef.current[groupKey].delete(text);
+            return;
           }
-          return { ...prev, [groupKey]: list };
+        }
+        addIncomingMessage(groupKey, {
+          text,
+          sender: isMe ? 'user' : 'bot',
+          timestamp: ts,
+          rawSentAt: obj.sent_at ?? null,
+          fromName: senderName || undefined,
         });
-      } catch {
+      } catch (parseError) {
         // fallback to plain text, strip optional `name: message` prefix
+        console.log('📝 Parsing as plain text message');
         let sender: 'user' | 'bot' = 'bot';
         let text = raw;
         let fromName: string | undefined = undefined;
@@ -186,16 +364,34 @@ export const GroupsListPage = () => {
             sender = 'user';
           }
           fromName = possibleName;
+          console.log('📝 Parsed plain text - from:', fromName, '| text:', text.substring(0, 50));
         }
-        setMessagesByGroup(prev => {
-          const list = prev[groupKey] ? [...prev[groupKey]] : [];
-          // Deduplicate for plain text messages too
-          const exists = list.some(m => m.text === text && m.fromName === fromName);
-          if (!exists) {
-            msgIdCounter.current++;
-            list.push({ id: msgIdCounter.current, text, sender, timestamp: new Date(), rawSentAt: null, fromName });
+        // Determine if this is our echo and skip if recently sent
+        const isMePlain = myUsername && fromName && fromName.toLowerCase() === myUsername.toLowerCase();
+        if (isMePlain) {
+          const now = Date.now();
+          if (!recentSentRef.current[groupKey]) recentSentRef.current[groupKey] = new Map();
+          const last = recentSentRef.current[groupKey].get(text);
+          if (last && now - last < 3000) {
+            recentSentRef.current[groupKey].delete(text);
+            return;
           }
-          return { ...prev, [groupKey]: list };
+        }
+        // For plain text messages without server timestamp, use last message time + 1ms
+        const existingMsgs = messagesByGroupRef.current[groupKey] || [];
+        let timestamp: Date;
+        if (existingMsgs.length > 0) {
+          timestamp = new Date(existingMsgs[existingMsgs.length - 1].timestamp.getTime() + 1);
+        } else {
+          timestamp = new Date();
+        }
+        
+        addIncomingMessage(groupKey, {
+          text,
+          sender,
+          timestamp,
+          rawSentAt: null,
+          fromName: fromName || undefined,
         });
       }
     };
@@ -300,8 +496,8 @@ export const GroupsListPage = () => {
   const handleGroupClick = (groupId: string, name: string) => {
     setSelectedId(groupId);
     setSelectedName(name);
-    // Reset view for the newly selected group so previous group's messages don't appear
-    setMessagesByGroup(prev => ({ ...prev, [name]: [] }));
+    // Don't reset messages - let WebSocket populate them
+    // This prevents clearing messages if they were already loaded
   };
 
   const handleSpeak = (text: string) => {
@@ -353,22 +549,47 @@ export const GroupsListPage = () => {
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
-    
+
     console.log('Attempting to send message, WS state:', wsRef.current?.readyState);
-    
+
     if (!wsRef.current) {
       alert('WebSocket not initialized. Please select the group again.');
       return;
     }
-    
+
     if (wsRef.current.readyState !== WebSocket.OPEN) {
       alert(`Not connected to chat (state: ${wsRef.current.readyState}). Please select the group again.`);
       return;
     }
-    
+
     const toSend = message;
     setMessage("");
-    
+
+    // Optimistic UI: append user's message immediately and mark to skip echo
+    if (selectedName) {
+      if (!recentSentRef.current[selectedName]) recentSentRef.current[selectedName] = new Map();
+      recentSentRef.current[selectedName].set(toSend, Date.now());
+      
+      // ALWAYS use server's last timestamp + 1ms to avoid timezone conflicts
+      const existingMsgs = messagesByGroupRef.current[selectedName] || [];
+      let timestamp: Date;
+      if (existingMsgs.length > 0) {
+        // Use last message's timestamp + 1ms (this is server time, so no timezone issues)
+        timestamp = new Date(existingMsgs[existingMsgs.length - 1].timestamp.getTime() + 1);
+      } else {
+        // No messages yet, use current time
+        timestamp = new Date();
+      }
+      
+      addIncomingMessage(selectedName, {
+        text: toSend,
+        sender: 'user',
+        timestamp,
+        rawSentAt: null,
+        fromName: myUsername || undefined,
+      });
+    }
+
     try {
       wsRef.current.send(toSend);
       console.log('Message sent successfully');
@@ -376,21 +597,6 @@ export const GroupsListPage = () => {
       console.error('Failed to send message:', err);
       setWsError('Failed to send message');
       alert('Failed to send message. Please try again.');
-    }
-  };
-
-  const handleAddGroup = async () => {
-    if (!newGroupName.trim()) return;
-    try {
-      await groupApi.addGroup({ name: newGroupName, description: "" });
-      // refresh list
-      const data = await groupApi.myGroups();
-      setGroups(data);
-      setShowAdd(false);
-      setNewGroupName("");
-      setNewGroupAvatar("💬");
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to add group');
     }
   };
 
@@ -416,6 +622,13 @@ export const GroupsListPage = () => {
             </span>
           </div>
           <div className="flex items-center gap-2" ref={menuRef}>
+            <button
+              onClick={() => setShowUserInfo(true)}
+              className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white text-sm font-semibold hover:ring-2 hover:ring-emerald-400 transition-all shadow-lg"
+              title="My Profile"
+            >
+              {userInfo?.name[0]?.toUpperCase() || '?'}
+            </button>
             <button
               onClick={() => setShowMenu((v) => !v)}
               className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-all focus:outline-none"
@@ -530,8 +743,36 @@ export const GroupsListPage = () => {
                   {selectedName?.[0]?.toUpperCase() ?? 'G'}
                 </div>
                 <div>
-                  <h2 className="font-semibold text-white">{selectedName}</h2>
-                  <p className="text-xs text-emerald-400">Active now</p>
+                  <h2 className="font-semibold text-white">{selectedName} <span className="text-xs text-gray-400">({currentMessages.length})</span></h2>
+                  <div className="flex items-center gap-2 text-xs">
+                    {!membersLoading && groupMembers.length > 0 && (
+                      <button
+                        onClick={() => setShowMembers(true)}
+                        className="text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
+                      >
+                        {groupMembers.length} {groupMembers.length === 1 ? 'member' : 'members'}
+                      </button>
+                    )}
+                    {membersLoading && (
+                      <span className="text-gray-400">Loading...</span>
+                    )}
+                    {!membersLoading && groupMembers.length === 0 && (
+                      <span className="text-gray-400">0 members</span>
+                    )}
+                    
+                    {(!membersLoading && groupMembers.length > 0) && (!assignedAgentsLoading && assignedAgents.length > 0) && (
+                      <span className="text-gray-500">•</span>
+                    )}
+                    
+                    {!assignedAgentsLoading && assignedAgents.length > 0 && (
+                      <button
+                        onClick={() => setShowAssignedAgents(true)}
+                        className="text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
+                      >
+                        {assignedAgents.length} {assignedAgents.length === 1 ? 'agent' : 'agents'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -554,11 +795,50 @@ export const GroupsListPage = () => {
                         className="w-full text-left px-4 py-3 text-[15px] text-white hover:text-emerald-300 hover:bg-gray-800 font-semibold"
                         onClick={() => {
                           setShowChatMenu(false);
-                          setJoinGroupName(selectedName || '');
                           setShowJoin(true);
                         }}
                       >
                         Invite to this group
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full text-left px-4 py-3 text-[15px] text-white hover:text-emerald-300 hover:bg-gray-800 font-semibold"
+                        onClick={async () => {
+                          setShowChatMenu(false);
+                          setShowMembers(true);
+                          setMembersLoading(true);
+                          setMembersError(null);
+                          try {
+                            const data = await authApi.getGroupMembers(selectedName);
+                            setGroupMembers(data);
+                          } catch (e) {
+                            setMembersError(e instanceof Error ? e.message : 'Failed to load members');
+                          } finally {
+                            setMembersLoading(false);
+                          }
+                        }}
+                      >
+                        View members
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full text-left px-4 py-3 text-[15px] text-white hover:text-emerald-300 hover:bg-gray-800 font-semibold"
+                        onClick={async () => {
+                          setShowChatMenu(false);
+                          setShowAssignedAgents(true);
+                          setAssignedAgentsLoading(true);
+                          setAssignedAgentsError(null);
+                          try {
+                            const data = await authApi.getAssignedAgents(selectedName);
+                            setAssignedAgents(data);
+                          } catch (e) {
+                            setAssignedAgentsError(e instanceof Error ? e.message : 'Failed to load assigned agents');
+                          } finally {
+                            setAssignedAgentsLoading(false);
+                          }
+                        }}
+                      >
+                        View assigned agents
                       </button>
                       <button
                         type="button"
@@ -578,7 +858,7 @@ export const GroupsListPage = () => {
                           }
                         }}
                       >
-                        Add agent to this group
+                        Assign agents
                       </button>
                     </div>
                   )}
@@ -590,24 +870,37 @@ export const GroupsListPage = () => {
             <div
               className="flex-1 overflow-y-auto px-4 py-6 bg-gray-900/30 backdrop-blur-sm"
             >
-              <div className="px-4 space-y-2">
-                {([...(messagesByGroup[selectedName] || [])]
-                  .sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime()))
-                  .map((msg) => (
+              <div className="space-y-3 flex flex-col">
+                {currentMessages.map((msg) => (
                   <div key={msg.id} className={`flex items-start ${msg.sender === 'user' ? 'justify-end ml-16' : 'justify-start mr-16'}`}>
                     {msg.sender !== 'user' && (
-                      <div className="mr-2 mt-0.5 w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-xs font-semibold text-white shadow-lg">
-                        {(msg.fromName?.[0] || '?').toUpperCase()}
+                      <div className={`mr-2 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white shadow-lg ${
+                        msg.fromName && ['Quag', 'Clown', 'Doctor', 'Dostoevsky', 'History', 'Cosmo', 'News', 'Whisperer'].some(agent => msg.fromName?.toLowerCase().includes(agent.toLowerCase()))
+                          ? 'bg-gradient-to-br from-purple-500 to-pink-500'
+                          : 'bg-gradient-to-br from-emerald-500 to-teal-500'
+                      }`}>
+                        {(() => {
+                          const AgentIcon = msg.fromName ? getAgentIcon(msg.fromName) : null;
+                          return AgentIcon ? <AgentIcon size={16} /> : (msg.fromName?.[0] || '?').toUpperCase();
+                        })()}
                       </div>
                     )}
                     <div
                       className={`group relative max-w-md px-4 py-2.5 rounded-2xl shadow-lg text-[15px] backdrop-blur-sm ${
-                        msg.sender === 'user' ? 'bg-gradient-to-br from-emerald-600 to-teal-600 text-white rounded-tr-sm' : 'bg-gray-800/80 text-white rounded-tl-sm border border-white/10'
+                        msg.sender === 'user' 
+                          ? 'bg-gradient-to-br from-emerald-600 to-teal-600 text-white rounded-tr-sm' 
+                          : msg.fromName && ['Quag', 'Clown', 'Doctor', 'Dostoevsky', 'History', 'Cosmo', 'News', 'Whisperer'].some(agent => msg.fromName?.toLowerCase().includes(agent.toLowerCase()))
+                            ? 'bg-gradient-to-br from-purple-900/80 to-pink-900/80 text-white rounded-tl-sm border border-purple-500/30'
+                            : 'bg-gray-800/80 text-white rounded-tl-sm border border-white/10'
                       }`}
                     >
                       {msg.sender !== 'user' && msg.fromName && (
                         <div className="text-[11px] font-medium mb-1">
-                          <span className="text-emerald-400">{msg.fromName}</span>
+                          <span className={
+                            ['Quag', 'Clown', 'Doctor', 'Dostoevsky', 'History', 'Cosmo', 'News', 'Whisperer'].some(agent => msg.fromName?.toLowerCase().includes(agent.toLowerCase()))
+                              ? 'text-purple-300'
+                              : 'text-emerald-400'
+                          }>{msg.fromName}</span>
                         </div>
                       )}
                       <p className="leading-relaxed">{msg.text}</p>
@@ -627,6 +920,8 @@ export const GroupsListPage = () => {
                   </div>
                 ))}
               </div>
+              {/* Scroll anchor at the very bottom */}
+              <div ref={messagesEndRef} className="h-1" />
             </div>
 
             {/* Composer */}
@@ -727,55 +1022,52 @@ export const GroupsListPage = () => {
       {/* Invite User To Group Modal */}
       {showJoin && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowJoin(false)}>
-          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold mb-4">Invite User to Group</h2>
+          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-4">Invite User to {selectedName || 'Group'}</h2>
             {joinError && (
-              <div className="mb-3 p-2 bg-red-500/20 border border-red-500/50 text-red-300 rounded">{joinError}</div>
+              <div className="mb-3 p-2 bg-red-500/20 border border-red-500/50 text-red-300 rounded text-sm">{joinError}</div>
             )}
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm mb-1 text-gray-300">Username to invite</label>
-                <input
-                  value={joinToName}
-                  onChange={(e) => setJoinToName(e.target.value)}
-                  className="w-full p-2 rounded-lg bg-white/10 border border-white/20 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-white placeholder-gray-400"
-                  placeholder="Enter username"
-                />
+            {usersLoading && <div className="text-sm text-gray-300">Loading users...</div>}
+            {usersError && <div className="text-sm text-red-400 mb-3">{usersError}</div>}
+            {!usersLoading && !usersError && (
+              <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide">
+                {allUsers.length === 0 ? (
+                  <div className="text-sm text-gray-400">No users available.</div>
+                ) : (
+                  allUsers.map((user) => (
+                    <div key={user.name} className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10 hover:bg-white/10 transition-colors">
+                      <div className="flex-1">
+                        <div className="font-medium text-white">{user.name}</div>
+                        {user.description && (
+                          <div className="text-xs text-gray-400 mt-0.5">{user.description}</div>
+                        )}
+                      </div>
+                      <button
+                        disabled={invitingUser === user.name}
+                        onClick={async () => {
+                          try {
+                            setInvitingUser(user.name);
+                            setJoinError(null);
+                            await groupApi.sendJoinRequest({ to_name: user.name, group_name: selectedName });
+                            setJoinSuccess(`Invitation sent to ${user.name}`);
+                            setTimeout(() => setJoinSuccess(null), 3000);
+                          } catch (e) {
+                            setJoinError(e instanceof Error ? e.message : 'Failed to send invitation');
+                          } finally {
+                            setInvitingUser(null);
+                          }
+                        }}
+                        className="ml-3 px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-600 disabled:opacity-50 transition-all"
+                      >
+                        {invitingUser === user.name ? 'Inviting...' : 'Invite'}
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
-              <div>
-                <label className="block text-sm mb-1 text-gray-300">Group Name</label>
-                <input
-                  value={joinGroupName}
-                  onChange={(e) => setJoinGroupName(e.target.value)}
-                  className="w-full p-2 rounded-lg bg-white/10 border border-white/20 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-white placeholder-gray-400"
-                  placeholder="Enter group name"
-                />
-              </div>
-            </div>
+            )}
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setShowJoin(false)} className="px-4 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white">Cancel</button>
-              <button
-                disabled={joinLoading || !joinToName.trim() || !joinGroupName.trim()}
-                onClick={async () => {
-                  try {
-                    setJoinError(null);
-                    setJoinLoading(true);
-                    await groupApi.sendJoinRequest({ to_name: joinToName.trim(), group_name: joinGroupName.trim() });
-                    setShowJoin(false);
-                    setJoinToName("");
-                    setJoinGroupName("");
-                    setJoinSuccess("Invitation sent");
-                    setTimeout(() => setJoinSuccess(null), 3000);
-                  } catch (e) {
-                    setJoinError(e instanceof Error ? e.message : 'Failed to send request');
-                  } finally {
-                    setJoinLoading(false);
-                  }
-                }}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50"
-              >
-                {joinLoading ? 'Sending...' : 'Send invite'}
-              </button>
+              <button onClick={() => setShowJoin(false)} className="px-4 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white">Close</button>
             </div>
           </div>
         </div>
@@ -784,6 +1076,107 @@ export const GroupsListPage = () => {
       {joinSuccess && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-white border border-gray-200 text-gray-900 py-2 px-4 rounded-lg shadow-lg z-[60]">
           {joinSuccess}
+        </div>
+      )}
+
+      {/* User Info Modal (Me) */}
+      {showUserInfo && userInfo && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowUserInfo(false)}>
+          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-6">My Profile</h2>
+            <div className="flex flex-col items-center mb-6">
+              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white text-3xl font-bold mb-4 shadow-lg">
+                {userInfo.name[0]?.toUpperCase() || '?'}
+              </div>
+              <h3 className="text-xl font-semibold text-white">{userInfo.name}</h3>
+              <p className="text-sm text-gray-400 mt-1">{userInfo.email}</p>
+            </div>
+            {userInfo.description && (
+              <div className="bg-white/5 rounded-lg p-4 border border-white/10 mb-4">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase mb-2">About</h4>
+                <p className="text-sm text-white">{userInfo.description}</p>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-6">
+              <button onClick={() => setShowUserInfo(false)} className="px-4 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white transition-all">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Assigned Agents Modal */}
+      {showAssignedAgents && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowAssignedAgents(false)}>
+          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-4">Assigned Agents in {selectedName || 'Group'}</h2>
+            {assignedAgentsLoading && <div className="text-sm text-gray-300">Loading agents...</div>}
+            {assignedAgentsError && <div className="text-sm text-red-400 mb-3">{assignedAgentsError}</div>}
+            {!assignedAgentsLoading && !assignedAgentsError && (
+              <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide">
+                {(!assignedAgents || assignedAgents.length === 0) ? (
+                  <div className="text-sm text-gray-400">No agents assigned to this group.</div>
+                ) : (
+                  (assignedAgents || []).map((agent) => {
+                    const AgentIcon = getAgentIcon(agent.name);
+                    return (
+                      <div key={agent.name} className="flex items-center p-3 bg-gradient-to-br from-purple-900/40 to-pink-900/40 rounded-lg border border-purple-500/30">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold mr-3 shadow-lg">
+                          {AgentIcon ? <AgentIcon size={20} /> : agent.name[0]?.toUpperCase() || '?'}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium text-purple-300">{agent.name}</div>
+                          {agent.description && (
+                            <div className="text-xs text-gray-400">{agent.description}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setShowAssignedAgents(false)} className="px-4 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Members Modal */}
+      {showMembers && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowMembers(false)}>
+          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-4">Members of {selectedName || 'Group'}</h2>
+            {membersLoading && <div className="text-sm text-gray-300">Loading members...</div>}
+            {membersError && <div className="text-sm text-red-400 mb-3">{membersError}</div>}
+            {!membersLoading && !membersError && (
+              <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide">
+                {groupMembers.length === 0 ? (
+                  <div className="text-sm text-gray-400">No members in this group.</div>
+                ) : (
+                  groupMembers.map((member) => (
+                    <div key={member.name} className="flex items-center p-3 bg-white/5 rounded-lg border border-white/10">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white font-semibold mr-3">
+                        {member.name[0]?.toUpperCase() || '?'}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-white">{member.name}</div>
+                        {member.email && (
+                          <div className="text-xs text-gray-400 mt-0.5">{member.email}</div>
+                        )}
+                        {member.description && (
+                          <div className="text-xs text-gray-400 mt-0.5">{member.description}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setShowMembers(false)} className="px-4 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white">Close</button>
+            </div>
+          </div>
         </div>
       )}
       {/* Chat Settings Modal (extended) */}
@@ -825,7 +1218,6 @@ export const GroupsListPage = () => {
                 className="p-2 rounded cursor-pointer text-gray-700 hover:text-gray-900"
                 onClick={() => {
                   setShowSettings(false);
-                  setJoinGroupName(selectedName || '');
                   setShowJoin(true);
                 }}
               >
@@ -841,7 +1233,7 @@ export const GroupsListPage = () => {
       {/* Change Password Modal */}
       {showChangePwd && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowChangePwd(false)}>
-          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-gray-900/95 backdrop-blur-2xl border border-white/20 text-white p-6 rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-semibold mb-4">Change Password</h2>
             {pwdError && (
               <div className="mb-3 p-2 bg-red-500/20 border border-red-500/50 text-red-300 rounded">{pwdError}</div>
@@ -888,7 +1280,7 @@ export const GroupsListPage = () => {
                     setPwdLoading(false);
                   }
                 }}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50"
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-600 disabled:opacity-50"
               >
                 {pwdLoading ? 'Saving...' : 'Save'}
               </button>
@@ -940,7 +1332,7 @@ export const GroupsListPage = () => {
                               setAssigningAgent(null);
                             }
                           }}
-                          className="px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50"
+                          className="px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-600 disabled:opacity-50"
                         >
                           {assigningAgent === a.name ? 'Adding…' : 'Add to group'}
                         </button>
@@ -995,7 +1387,7 @@ export const GroupsListPage = () => {
                               setRequestActionLoading(null);
                             }
                           }}
-                          className="px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50"
+                          className="px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-600 disabled:to-gray-600 disabled:opacity-50"
                         >
                           Accept
                         </button>
@@ -1058,7 +1450,7 @@ export const GroupsListPage = () => {
                 </button>
                 <button
                   onClick={handleAddGroup}
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 font-semibold disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50"
+                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 font-semibold disabled:from-gray-600 disabled:to-gray-600 disabled:opacity-50"
                   disabled={!newGroupName.trim()}
                 >
                   Create
