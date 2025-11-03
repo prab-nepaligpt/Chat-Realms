@@ -171,6 +171,18 @@ export const GroupsListPage = () => {
     // Get current list for this group
     const list = messagesByGroupRef.current[groupKey] ? [...messagesByGroupRef.current[groupKey]] : [];
     
+    // Check for duplicates: same text, sender, and timestamp within 1 second
+    const isDuplicate = list.some(existing => 
+      existing.text === msg.text && 
+      existing.sender === msg.sender &&
+      Math.abs(existing.timestamp.getTime() - msg.timestamp.getTime()) < 1000
+    );
+    
+    if (isDuplicate) {
+      console.log('⚠️ Duplicate message detected, skipping:', msg.text.substring(0, 30));
+      return;
+    }
+    
     // Generate id locally
     msgIdCounter.current++;
     const item = { id: msg.id ?? msgIdCounter.current, ...msg };
