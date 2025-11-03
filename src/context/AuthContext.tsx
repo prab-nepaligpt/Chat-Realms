@@ -1,43 +1,65 @@
-import { createContext, useState, useContext, type ReactNode } from 'react';
+ import { createContext, useState, useContext, type ReactNode, useEffect } from 'react';
+ import { authApi, storage, type TokenResponse } from '../lib/api';
 
-interface AuthContextType {
-  isAuthenticated: boolean;
-  login: (email: string, pass: string) => boolean;
-  logout: () => void;
-}
+ interface AuthContextType {
+   isAuthenticated: boolean;
+   token: TokenResponse | null;
+   login: (email: string, pass: string) => Promise<boolean>;
+   register: (params: { name: string; email: string; password: string; description?: string | null }) => Promise<boolean>;
+   logout: () => void;
+ }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('isAuthenticated') === 'true';
-  });
+ export const AuthProvider = ({ children }: { children: ReactNode }) => {
+   const [token, setToken] = useState<TokenResponse | null>(() => storage.getToken());
+   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!token);
 
-  const login = (email: string, pass: string) => {
-    if (email === 'prabesh@gmail.com' && pass === 'testing123') {
-      localStorage.setItem('isAuthenticated', 'true');
-      setIsAuthenticated(true);
-      return true;
-    }
-    return false;
-  };
+   useEffect(() => {
+     setIsAuthenticated(!!token);
+   }, [token]);
 
-  const logout = () => {
-    localStorage.removeItem('isAuthenticated');
-    setIsAuthenticated(false);
-  };
+   const login = async (email: string, pass: string) => {
+     try {
+       const t = await authApi.login(email, pass);
+       storage.setToken(t);
+       setToken(t);
+       return true;
+     } catch (e) {
+       return false;
+     }
+   };
 
-  return (
-    <AuthContext.Provider value={{ isAuthenticated, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
+   const register = async (params: { name: string; email: string; password: string; description?: string | null }) => {
+     try {
+       await authApi.register(params);
+       // Auto-login after successful registration
+       const t = await authApi.login(params.email, params.password);
+       storage.setToken(t);
+       setToken(t);
+       return true;
+     } catch (e) {
+       return false;
+     }
+   };
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+   const logout = () => {
+     storage.clear();
+     setToken(null);
+     setIsAuthenticated(false);
+   };
+
+   return (
+     <AuthContext.Provider value={{ isAuthenticated, token, login, register, logout }}>
+       {children}
+     </AuthContext.Provider>
+   );
+ };
+
+ export const useAuth = () => {
+   const context = useContext(AuthContext);
+   if (context === undefined) {
+     throw new Error('useAuth must be used within an AuthProvider');
+   }
+   return context;
+ };
